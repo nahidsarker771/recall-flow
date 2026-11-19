@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Concentric rings: a memory trace being reinforced. -->
+    <path
+        android:pathData="M20,54 a34,34 0 1,0 68,0 a34,34 0 1,0 -68,0"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="7"
+        android:fillColor="@android:color/transparent" />
+    <path
+        android:pathData="M34,54 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0"
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.72"
+        android:strokeWidth="6"
+        android:fillColor="@android:color/transparent" />
+    <path
+        android:pathData="M47,54 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0"
+        android:fillColor="#FFFFFF" />
+</vector>

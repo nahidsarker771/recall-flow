@@ -58,16 +58,17 @@ fun TopicsScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
 
-    val filtered = remember(topics, query) {
+    val searchIndex = remember(topics) {
+        topics.associate { topic ->
+            topic.id to "${topic.name}\n${topic.category}\n${topic.notes}".lowercase()
+        }
+    }
+    val filtered = remember(topics, query, searchIndex) {
         if (query.isBlank()) {
             topics
         } else {
             val needle = query.trim().lowercase()
-            topics.filter { topic ->
-                topic.name.lowercase().contains(needle) ||
-                    topic.category.lowercase().contains(needle) ||
-                    topic.notes.lowercase().contains(needle)
-            }
+            topics.filter { topic -> searchIndex[topic.id]?.contains(needle) == true }
         }
     }
 

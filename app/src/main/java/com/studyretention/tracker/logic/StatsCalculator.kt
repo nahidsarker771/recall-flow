@@ -26,7 +26,9 @@ data class StudyStats(
 /** Pure helpers for streaks, daily progress and chart series. */
 object StatsCalculator {
 
-    fun dateOf(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): LocalDate =
+    private val systemZone: ZoneId = ZoneId.systemDefault()
+
+    fun dateOf(epochMillis: Long, zone: ZoneId = systemZone): LocalDate =
         Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalDate()
 
     fun currentStreak(sessions: List<ReviewSession>, today: LocalDate = LocalDate.now()): Int {
@@ -70,17 +72,18 @@ object StatsCalculator {
         days: Int = 30,
     ): List<DayRetention> {
         val start = today.minusDays((days - 1).toLong())
-        return sessions
-            .filter { dateOf(it.timestamp) >= start }
-            .groupBy { dateOf(it.timestamp) }
-            .toSortedMap()
-            .map { (date, daySessions) ->
-                DayRetention(
-                    date = date,
-                    percent = (daySessions.sumOf { it.recallRating } * 100.0 / (daySessions.size * 5)).toInt(),
-                    reviews = daySessions.size,
-                )
-            }
+        val byDay = HashMap<LocalDate, MutableList<ReviewSession>>()
+        sessions.forEach { session ->
+            val date = dateOf(session.timestamp)
+            if (date >= start) byDay.getOrPut(date) { ArrayList() }.add(session)
+        }
+        return byDay.toSortedMap().map { (date, daySessions) ->
+            DayRetention(
+                date = date,
+                percent = (daySessions.sumOf { it.recallRating } * 100.0 / (daySessions.size * 5)).toInt(),
+                reviews = daySessions.size,
+            )
+        }
     }
 
     fun stats(sessions: List<ReviewSession>, topics: List<Topic>): StudyStats = StudyStats(

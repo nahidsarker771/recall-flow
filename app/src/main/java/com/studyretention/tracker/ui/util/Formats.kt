@@ -10,7 +10,16 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 
-private val zone: ZoneId get() = ZoneId.systemDefault()
+private val zone: ZoneId = ZoneId.systemDefault()
+
+private val TimeFormat: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault())
+private val MonthYearFormat: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault())
+private val DayLongFormat: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.getDefault())
+private val MonthDayFormat: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())
 
 fun LocalDate.toEpochMillis(time: LocalTime = LocalTime.NOON): Long =
     atTime(time).atZone(zone).toInstant().toEpochMilli()
@@ -22,23 +31,18 @@ fun Long.toLocalDateTime(): LocalDateTime =
     Instant.ofEpochMilli(this).atZone(zone).toLocalDateTime()
 
 fun formatTime(epochMillis: Long): String =
-    epochMillis.toLocalDateTime().format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()))
+    epochMillis.toLocalDateTime().format(TimeFormat)
 
 fun formatTime(hour: Int, minute: Int): String =
-    LocalTime.of(hour.coerceIn(0, 23), minute.coerceIn(0, 59))
-        .format(DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault()))
+    LocalTime.of(hour.coerceIn(0, 23), minute.coerceIn(0, 59)).format(TimeFormat)
 
-fun formatMonthYear(month: YearMonth): String =
-    month.format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()))
+fun formatMonthYear(month: YearMonth): String = month.format(MonthYearFormat)
 
-fun formatDayLong(date: LocalDate): String =
-    date.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.getDefault()))
+fun formatDayLong(date: LocalDate): String = date.format(DayLongFormat)
 
-fun formatDayShort(epochMillis: Long): String =
-    epochMillis.toLocalDate().format(DateTimeFormatter.ofPattern("MMM d", Locale.getDefault()))
+fun formatDayShort(epochMillis: Long): String = epochMillis.toLocalDate().format(MonthDayFormat)
 
-fun formatDateShort(date: LocalDate): String =
-    date.format(DateTimeFormatter.ofPattern("MMM d", Locale.getDefault()))
+fun formatDateShort(date: LocalDate): String = date.format(MonthDayFormat)
 
 /**
  * Human next-review label: "Overdue 2d", "Due now", "Today, 6:00 PM",

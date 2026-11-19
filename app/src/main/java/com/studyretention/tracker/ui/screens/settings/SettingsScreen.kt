@@ -11,8 +11,11 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +25,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -46,7 +50,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
@@ -54,11 +60,15 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.studyretention.tracker.BuildConfig
+import com.studyretention.tracker.data.FocusPalette
+import com.studyretention.tracker.data.HapticsMode
 import com.studyretention.tracker.data.ThemeMode
 import com.studyretention.tracker.logic.Algorithm
 import com.studyretention.tracker.ui.components.ActionRow
 import com.studyretention.tracker.ui.components.ScreenHeader
+import com.studyretention.tracker.ui.theme.focusPrimaryColor
 import com.studyretention.tracker.ui.theme.Spacing
+import com.studyretention.tracker.ui.util.Haptics
 import com.studyretention.tracker.ui.util.formatTime
 import com.studyretention.tracker.viewmodel.RecallFlowViewModel
 import java.time.LocalDate
@@ -74,6 +84,8 @@ fun SettingsScreen(
 
     var showAlgorithmDialog by rememberSaveable { mutableStateOf(false) }
     var showThemeDialog by rememberSaveable { mutableStateOf(false) }
+    var showHapticsDialog by rememberSaveable { mutableStateOf(false) }
+    var showPaletteDialog by rememberSaveable { mutableStateOf(false) }
     var showLimitDialog by rememberSaveable { mutableStateOf(false) }
 
     val exportLauncher = rememberLauncherForActivityResult(
@@ -255,6 +267,18 @@ fun SettingsScreen(
                     },
                 )
             }
+            Divider()
+            ActionRow(
+                title = "Focus palette",
+                subtitle = settings.focusPalette.description,
+                onClick = { showPaletteDialog = true },
+            )
+            Divider()
+            ActionRow(
+                title = "Haptics",
+                subtitle = settings.hapticsMode.description,
+                onClick = { showHapticsDialog = true },
+            )
         }
 
         Spacer(Modifier.height(Spacing.xl))
@@ -325,6 +349,34 @@ fun SettingsScreen(
                 showThemeDialog = false
             },
             onDismiss = { showThemeDialog = false },
+        )
+    }
+
+    if (showHapticsDialog) {
+        HapticsDialog(
+            selected = settings.hapticsMode,
+            onSelect = {
+                vm.setHapticsMode(it)
+                showHapticsDialog = false
+            },
+            onDismiss = { showHapticsDialog = false },
+        )
+    }
+
+    if (showPaletteDialog) {
+        val dark = when (settings.themeMode) {
+            ThemeMode.SYSTEM -> isSystemInDarkTheme()
+            ThemeMode.LIGHT -> false
+            ThemeMode.DARK -> true
+        }
+        FocusPaletteDialog(
+            selected = settings.focusPalette,
+            dark = dark,
+            onSelect = {
+                vm.setFocusPalette(it)
+                showPaletteDialog = false
+            },
+            onDismiss = { showPaletteDialog = false },
         )
     }
 
@@ -404,6 +456,100 @@ private fun AlgorithmDialog(
                             Text(algorithm.title, style = MaterialTheme.typography.bodyLarge)
                             Text(
                                 text = algorithm.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
+}
+
+@Composable
+private fun FocusPaletteDialog(
+    selected: FocusPalette,
+    dark: Boolean,
+    onSelect: (FocusPalette) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Focus palette") },
+        text = {
+            Column {
+                FocusPalette.entries.forEach { palette ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(palette) }
+                            .padding(vertical = Spacing.xs),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = palette == selected,
+                            onClick = null,
+                        )
+                        Box(
+                            modifier = Modifier
+                                .padding(start = Spacing.sm)
+                                .size(14.dp)
+                                .clip(CircleShape)
+                                .background(focusPrimaryColor(palette, dark)),
+                        )
+                        Column(modifier = Modifier.padding(start = Spacing.sm)) {
+                            Text(palette.label, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = palette.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
+}
+
+@Composable
+private fun HapticsDialog(
+    selected: HapticsMode,
+    onSelect: (HapticsMode) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val view = LocalView.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Haptics") },
+        text = {
+            Column {
+                HapticsMode.entries.forEach { mode ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                Haptics(view, mode).strong()
+                                onSelect(mode)
+                            }
+                            .padding(vertical = Spacing.xs),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = mode == selected,
+                            onClick = null,
+                        )
+                        Column(modifier = Modifier.padding(start = Spacing.sm)) {
+                            Text(mode.label, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = mode.description,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

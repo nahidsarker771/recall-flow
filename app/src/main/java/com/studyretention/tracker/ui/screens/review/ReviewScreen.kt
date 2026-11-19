@@ -1,6 +1,11 @@
 package com.studyretention.tracker.ui.screens.review
 
 import android.os.SystemClock
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +28,7 @@ import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -38,6 +44,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -47,15 +55,19 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.studyretention.tracker.data.Topic
 import com.studyretention.tracker.data.toReviewState
+import com.studyretention.tracker.focus.FocusSession
 import com.studyretention.tracker.ui.components.TagChip
+import com.studyretention.tracker.ui.util.Haptics
 import com.studyretention.tracker.ui.theme.Spacing
 import com.studyretention.tracker.ui.util.formatDayShort
+import com.studyretention.tracker.ui.util.rememberHaptics
 import com.studyretention.tracker.ui.util.intervalLabel
 import com.studyretention.tracker.ui.util.ratingLabel
 import com.studyretention.tracker.ui.util.stopwatchLabel
 import com.studyretention.tracker.ui.util.stopwatchTenthsLabel
 import com.studyretention.tracker.viewmodel.RecallFlowViewModel
 import kotlinx.coroutines.delay
+import kotlin.math.min
 
 private val ratingHints = listOf(
     "None",
@@ -78,13 +90,22 @@ fun ReviewScreen(
     topicId: Long,
     onDone: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val haptics = rememberHaptics(settings.hapticsMode)
     val topics by vm.topics.collectAsStateWithLifecycle()
     val topic = topics.firstOrNull { it.id == topicId }
 
     var phase by rememberSaveable { mutableStateOf(ReviewPhase.Running) }
-    var startedAt by rememberSaveable { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    var startedAt by rememberSaveable { mutableLongStateOf(0L) }
     var elapsedSeconds by rememberSaveable { mutableLongStateOf(0L) }
     var rating by rememberSaveable { mutableIntStateOf(-1) }
+
+    LaunchedEffect(topic?.id, topic?.name, phase) {
+        if (phase != ReviewPhase.Running) return@LaunchedEffect
+        val loaded = topic ?: return@LaunchedEffect
+        startedAt = FocusSession.ensure(context, loaded.id, loaded.name).startElapsed
+    }
 
     if (topic == null) {
         Column(
@@ -105,11 +126,17 @@ fun ReviewScreen(
         ReviewPhase.Running -> RunningReview(
             topic = topic,
             startedAt = startedAt,
+            haptics = haptics,
             onStop = { seconds ->
+                haptics.strong()
                 elapsedSeconds = seconds
+                FocusSession.stop(context)
                 phase = ReviewPhase.Rating
             },
-            onClose = onDone,
+            onClose = {
+                FocusSession.stop(context)
+                onDone()
+            },
         )
 
         ReviewPhase.Rating -> RatingReview(
@@ -117,7 +144,11 @@ fun ReviewScreen(
             topic = topic,
             rating = rating,
             elapsedSeconds = elapsedSeconds,
-            onRating = { rating = it },
+            haptics = haptics,
+            onRating = {
+                haptics.soft()
+                rating = it
+            },
             onClose = onDone,
             onSaved = onDone,
         )
@@ -128,30 +159,27 @@ fun ReviewScreen(
 private fun RunningReview(
     topic: Topic,
     startedAt: Long,
+    haptics: Haptics,
     onStop: (Long) -> Unit,
     onClose: () -> Unit,
 ) {
-    var elapsedMillis by remember {
-        mutableLongStateOf((SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L))
-    }
-
-    LaunchedEffect(startedAt) {
-        while (true) {
-            elapsedMillis = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L)
-            delay(100)
-        }
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    0f to MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                    0.55f to MaterialTheme.colorScheme.background,
+                    1f to MaterialTheme.colorScheme.background,
+                ),
+            )
             .padding(horizontal = Spacing.screen, vertical = Spacing.lg),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "REVIEWING",
+                    text = "FOCUS SESSION",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -168,6 +196,70 @@ private fun RunningReview(
             }
         }
 
+        FocusTimerBlock(
+            startedAt = startedAt,
+            haptics = haptics,
+            onStop = onStop,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+        )
+    }
+}
+
+/**
+ * Owns the 10 Hz stopwatch tick so only this block recomposes, not the whole
+ * gradient screen. The elapsed time is derived from the durable start stamp.
+ */
+@Composable
+private fun FocusTimerBlock(
+    startedAt: Long,
+    haptics: Haptics,
+    onStop: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var elapsedMillis by remember {
+        mutableLongStateOf((SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L))
+    }
+
+    LaunchedEffect(startedAt) {
+        while (true) {
+            elapsedMillis = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L)
+            delay(100)
+        }
+    }
+
+    val minutes = (elapsedMillis / 60_000L).toInt()
+    val milestone = FocusSession.milestoneFor(minutes.toLong())
+    val nextMilestone = FocusSession.milestones.firstOrNull { it.minutes > minutes }
+    val progress = (elapsedMillis.toFloat() /
+        (FocusSession.TARGET_MINUTES * 60_000f)).coerceIn(0f, 1f)
+
+    var shownMilestone by rememberSaveable { mutableIntStateOf(-1) }
+    var overlayMinutes by rememberSaveable { mutableIntStateOf(-1) }
+
+    LaunchedEffect(milestone?.minutes) {
+        val reached = milestone ?: return@LaunchedEffect
+        if (reached.minutes <= shownMilestone) return@LaunchedEffect
+        shownMilestone = reached.minutes
+        overlayMinutes = reached.minutes
+        haptics.strong()
+    }
+
+    LaunchedEffect(overlayMinutes) {
+        if (overlayMinutes < 0) return@LaunchedEffect
+        delay(9_000)
+        overlayMinutes = -1
+    }
+
+    val overlayMessage = FocusSession.milestones
+        .firstOrNull { it.minutes == overlayMinutes }
+        ?.message
+
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Spacer(Modifier.weight(1f))
         Text(
             text = stopwatchTenthsLabel(elapsedMillis),
@@ -177,14 +269,70 @@ private fun RunningReview(
                 letterSpacing = 1.sp,
             ),
             fontWeight = FontWeight.Light,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = MaterialTheme.colorScheme.primary,
         )
+        Spacer(Modifier.height(Spacing.sm))
+        Text(
+            text = "${min(minutes, FocusSession.TARGET_MINUTES)} of " +
+                "${FocusSession.TARGET_MINUTES} min",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(Spacing.sm))
+        LinearProgressIndicator(
+            progress = { progress },
+            modifier = Modifier
+                .fillMaxWidth(0.7f)
+                .height(6.dp),
+            trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        )
+        Spacer(Modifier.height(Spacing.sm))
+        Text(
+            text = nextMilestone?.let {
+                "Next boost in ${it.minutes - minutes} min · stays on in the background"
+            } ?: "Target reached — finish whenever you are ready",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+
+        AnimatedVisibility(
+            visible = overlayMessage != null,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+        ) {
+            if (overlayMessage != null) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = Spacing.md),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                ) {
+                    Column(modifier = Modifier.padding(Spacing.lg)) {
+                        Text(
+                            text = "MILESTONE · ${overlayMinutes} MIN",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                        Spacer(Modifier.height(Spacing.xs))
+                        Text(
+                            text = overlayMessage,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                    }
+                }
+            }
+        }
+
         Spacer(Modifier.height(Spacing.xl))
         Button(
             onClick = {
                 val seconds = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L) / 1000
                 onStop(seconds)
             },
+            enabled = startedAt > 0L,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp),
@@ -208,6 +356,7 @@ private fun RatingReview(
     topic: Topic,
     rating: Int,
     elapsedSeconds: Long,
+    haptics: Haptics,
     onRating: (Int) -> Unit,
     onClose: () -> Unit,
     onSaved: () -> Unit,
@@ -386,6 +535,7 @@ private fun RatingReview(
         Button(
             onClick = {
                 if (rating >= 0) {
+                    haptics.strong()
                     vm.saveReview(topic.id, rating, elapsedSeconds.toInt()) { onSaved() }
                 }
             },

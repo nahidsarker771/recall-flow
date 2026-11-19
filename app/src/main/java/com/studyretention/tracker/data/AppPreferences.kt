@@ -12,6 +12,20 @@ enum class ThemeMode(val label: String) {
     DARK("Dark"),
 }
 
+enum class FocusPalette(val label: String, val description: String) {
+    SAGE("Sage", "Calm green — easy to stay with"),
+    OCEAN("Ocean", "Muted blue-teal"),
+    DUSK("Dusk", "Soft gray-violet"),
+    SAND("Sand", "Warm neutral"),
+    INDIGO("Indigo", "Original indigo"),
+}
+
+enum class HapticsMode(val label: String, val description: String) {
+    STRONG("Strong", "Firm taps for add, save, stop and milestones"),
+    LIGHT("Light", "Soft ticks everywhere"),
+    OFF("Off", "No vibration"),
+}
+
 data class AppSettings(
     val dailyLimit: Int = 0,
     val notificationsEnabled: Boolean = true,
@@ -21,6 +35,8 @@ data class AppSettings(
     val algorithm: Algorithm = Algorithm.GUIDED,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val dynamicColor: Boolean = true,
+    val hapticsMode: HapticsMode = HapticsMode.STRONG,
+    val focusPalette: FocusPalette = FocusPalette.SAGE,
 )
 
 /**
@@ -54,6 +70,12 @@ class AppPreferences(context: Context) {
             ?.let { name -> runCatching { ThemeMode.valueOf(name) }.getOrNull() }
             ?: ThemeMode.SYSTEM,
         dynamicColor = prefs.getBoolean(KEY_DYNAMIC_COLOR, true),
+        hapticsMode = prefs.getString(KEY_HAPTICS, null)
+            ?.let { name -> runCatching { HapticsMode.valueOf(name) }.getOrNull() }
+            ?: HapticsMode.STRONG,
+        focusPalette = prefs.getString(KEY_PALETTE, null)
+            ?.let { name -> runCatching { FocusPalette.valueOf(name) }.getOrNull() }
+            ?: FocusPalette.SAGE,
     )
 
     private fun write(settings: AppSettings) {
@@ -66,6 +88,8 @@ class AppPreferences(context: Context) {
             .putString(KEY_ALGORITHM, settings.algorithm.name)
             .putString(KEY_THEME, settings.themeMode.name)
             .putBoolean(KEY_DYNAMIC_COLOR, settings.dynamicColor)
+            .putString(KEY_HAPTICS, settings.hapticsMode.name)
+            .putString(KEY_PALETTE, settings.focusPalette.name)
             .apply()
     }
 
@@ -78,5 +102,7 @@ class AppPreferences(context: Context) {
         const val KEY_ALGORITHM = "algorithm"
         const val KEY_THEME = "theme_mode"
         const val KEY_DYNAMIC_COLOR = "dynamic_color"
+        const val KEY_HAPTICS = "haptics_mode"
+        const val KEY_PALETTE = "focus_palette"
     }
 }

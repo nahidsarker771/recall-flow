@@ -1,5 +1,8 @@
 package com.studyretention.tracker.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
@@ -16,9 +19,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -66,29 +69,15 @@ fun RecallFlowApp(
     }
 
     val rootRoutes = remember { BottomTabs.map { it.route }.toSet() }
-    val tabHistory = remember { mutableStateListOf<String>() }
+    val activity = LocalContext.current.findActivity()
 
     val openTab: (BottomTab) -> Unit = { tab ->
-        val current = currentDestination?.route
-        if (tab.route != current) {
-            if (current != null && current in rootRoutes && tabHistory.lastOrNull() != current) {
-                tabHistory.add(current)
-                if (tabHistory.size > 8) tabHistory.removeAt(0)
-            }
+        if (tab.route != currentDestination?.route) {
             navController.navigateToTab(tab)
         }
     }
 
     val currentRoute = currentDestination?.route
-    BackHandler(
-        enabled = currentRoute != null &&
-            currentRoute in rootRoutes &&
-            (tabHistory.isNotEmpty() || currentRoute != Routes.TODAY),
-    ) {
-        val previous = tabHistory.removeLastOrNull()
-            ?: Routes.TODAY.takeIf { currentRoute != Routes.TODAY }
-        if (previous != null) navController.navigateToRoot(previous)
-    }
 
     LaunchedEffect(initialReviewTopicId) {
         val topicId = initialReviewTopicId
@@ -194,6 +183,12 @@ fun RecallFlowApp(
             }
         }
     }
+
+    // Registered after the NavHost so it wins over its back callback: a root
+    // tab is top-level, so Back/swipe exits instead of walking tab history.
+    BackHandler(enabled = currentRoute != null && currentRoute in rootRoutes) {
+        activity?.finish()
+    }
 }
 
 @Composable
@@ -245,9 +240,22 @@ private fun RecallFlowBottomBar(
 private fun NavHostController.navigateToTab(tab: BottomTab) = navigateToRoot(tab.route)
 
 private fun NavHostController.navigateToRoot(route: String) {
+    // Keep exactly one root tab in the back stack. Otherwise Back would pop
+    // through previously visited tabs (Today -> A -> B -> Today -> exit).
+    val currentId = currentDestination?.id
     navigate(route) {
-        popUpTo(graph.findStartDestination().id) { saveState = true }
+        if (currentId != null) {
+            popUpTo(currentId) { inclusive = true }
+        }
         launchSingleTop = true
-        restoreState = true
     }
+}
+
+private fun Context.findActivity(): Activity? {
+    var current: Context = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return current as? Activity
 }

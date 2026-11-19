@@ -3,14 +3,15 @@ package com.studyretention.tracker.ui.screens.today
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.MenuBook
@@ -85,159 +86,173 @@ fun TodayScreen(
     val totalForToday = completedToday + due.size
     val progress = if (totalForToday == 0) 0f else completedToday.toFloat() / totalForToday
 
-    val heroTopic = due.firstOrNull() ?: topics
-        .filter { it.nextReviewAt > nowMs }
-        .minByOrNull { it.nextReviewAt }
+    val heroTopic = remember(due, topics, nowMs) {
+        due.firstOrNull() ?: topics
+            .filter { it.nextReviewAt > nowMs }
+            .minByOrNull { it.nextReviewAt }
+    }
 
     val dateLabel = remember {
         LocalDateTime.now().format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.getDefault()))
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = Spacing.screen, vertical = Spacing.lg),
+    val hero = heroTopic
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = Spacing.screen, vertical = Spacing.lg),
     ) {
-        ScreenHeader(
-            eyebrow = dateLabel,
-            title = greetingFor(LocalDateTime.now().hour),
-            subtitle = when {
-                due.isNotEmpty() -> "${due.size} ${if (due.size == 1) "topic" else "topics"} due now"
-                topics.isEmpty() -> "A calm place to keep what you learn."
-                else -> "All caught up — nice work."
-            },
-            trailing = {
-                IconButton(onClick = onOpenSettings) {
-                    Icon(
-                        imageVector = Icons.Outlined.Settings,
-                        contentDescription = "Settings",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            },
-        )
-
-        Spacer(Modifier.height(Spacing.lg))
-
-        if (heroTopic == null) {
-            EmptyState(
-                icon = Icons.Outlined.MenuBook,
-                title = "No topics yet",
-                message = "Add what you're learning and RecallFlow will schedule the first review about 26 hours later.",
+        item {
+            ScreenHeader(
+                eyebrow = dateLabel,
+                title = greetingFor(LocalDateTime.now().hour),
+                subtitle = when {
+                    due.isNotEmpty() -> "${due.size} ${if (due.size == 1) "topic" else "topics"} due now"
+                    topics.isEmpty() -> "A calm place to keep what you learn."
+                    else -> "All caught up — nice work."
+                },
+                trailing = {
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(
+                            imageVector = Icons.Outlined.Settings,
+                            contentDescription = "Settings",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
             )
-            Spacer(Modifier.height(Spacing.md))
-            Button(
-                onClick = onOpenTopics,
-                modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.large,
-            ) {
-                Text("Add your first topic")
-            }
-            Spacer(Modifier.height(Spacing.xl))
-            return@Column
         }
+        item { Spacer(Modifier.height(Spacing.lg)) }
 
-        val isDue = heroTopic.nextReviewAt <= nowMs
-        HeroCard(
-            topic = heroTopic,
-            isDue = isDue,
-            nowMs = nowMs,
-            onStart = { onReview(heroTopic.id) },
-        )
-
-        Spacer(Modifier.height(Spacing.lg))
-
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-        ) {
-            Row(
-                modifier = Modifier.padding(Spacing.lg),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Spacing.lg),
-            ) {
-                ProgressRing(progress = progress)
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Today's reviews",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Spacer(Modifier.height(Spacing.xxs))
-                    Text(
-                        text = "$completedToday of $totalForToday complete",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(Spacing.sm))
-                    StreakChip(days = streak)
+        if (hero == null) {
+            item {
+                EmptyState(
+                    icon = Icons.Outlined.MenuBook,
+                    title = "No topics yet",
+                    message = "Add what you're learning and RecallFlow will schedule the first review about 26 hours later.",
+                )
+            }
+            item { Spacer(Modifier.height(Spacing.md)) }
+            item {
+                Button(
+                    onClick = onOpenTopics,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                ) {
+                    Text("Add your first topic")
                 }
             }
-        }
-
-        if (due.isNotEmpty()) {
-            Spacer(Modifier.height(Spacing.xl))
-            SectionTitle(title = "Due now")
-            Spacer(Modifier.height(Spacing.sm))
-            due.forEach { topic ->
-                SwipeActionRow(
-                    onSwipeRight = { onReview(topic.id) },
-                    onSwipeLeft = { vm.snoozeTopic(topic.id) },
-                    rightLabel = "Review",
-                    leftLabel = "Snooze 1h",
-                ) {
-                    DueTopicRow(
-                        topic = topic,
-                        nowMs = nowMs,
-                        onClick = { onOpenTopic(topic.id) },
-                    )
-                }
-                Spacer(Modifier.height(Spacing.sm))
+            item { Spacer(Modifier.height(Spacing.xl)) }
+        } else {
+            val isDue = hero.nextReviewAt <= nowMs
+            item {
+                HeroCard(
+                    topic = hero,
+                    isDue = isDue,
+                    nowMs = nowMs,
+                    onStart = { onReview(hero.id) },
+                )
             }
-        } else if (completedToday > 0) {
-            Spacer(Modifier.height(Spacing.xl))
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.extraLarge,
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-            ) {
-                Row(
-                    modifier = Modifier.padding(Spacing.lg),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+            item { Spacer(Modifier.height(Spacing.lg)) }
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.CheckCircle,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.tertiary,
-                    )
-                    Column {
-                        Text(
-                            text = "All done for today",
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            text = "Come back tomorrow — consistency beats cramming.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    Row(
+                        modifier = Modifier.padding(Spacing.lg),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.lg),
+                    ) {
+                        ProgressRing(progress = progress)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Today's reviews",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Spacer(Modifier.height(Spacing.xxs))
+                            Text(
+                                text = "$completedToday of $totalForToday complete",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(Spacing.sm))
+                            StreakChip(days = streak)
+                        }
                     }
                 }
             }
-        }
 
-        if (due.isEmpty() && heroTopic.nextReviewAt > nowMs) {
-            Spacer(Modifier.height(Spacing.xl))
-            Text(
-                text = "Next up: ${heroTopic.name} — ${relativeDueLabel(heroTopic.nextReviewAt, nowMs)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (due.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(Spacing.xl))
+                    SectionTitle(title = "Due now")
+                    Spacer(Modifier.height(Spacing.sm))
+                }
+                items(due, key = { it.id }) { topic ->
+                    SwipeActionRow(
+                        onSwipeRight = { onReview(topic.id) },
+                        onSwipeLeft = { vm.snoozeTopic(topic.id) },
+                        rightLabel = "Review",
+                        leftLabel = "Snooze 1h",
+                    ) {
+                        DueTopicRow(
+                            topic = topic,
+                            nowMs = nowMs,
+                            onClick = { onOpenTopic(topic.id) },
+                        )
+                    }
+                    Spacer(Modifier.height(Spacing.sm))
+                }
+            } else if (completedToday > 0) {
+                item {
+                    Spacer(Modifier.height(Spacing.xl))
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.extraLarge,
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(Spacing.lg),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.CheckCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.tertiary,
+                            )
+                            Column {
+                                Text(
+                                    text = "All done for today",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    text = "Come back tomorrow — consistency beats cramming.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (due.isEmpty() && hero.nextReviewAt > nowMs) {
+                item {
+                    Spacer(Modifier.height(Spacing.xl))
+                    Text(
+                        text = "Next up: ${hero.name} — ${relativeDueLabel(hero.nextReviewAt, nowMs)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            item { Spacer(Modifier.height(Spacing.xxl)) }
         }
-        Spacer(Modifier.height(Spacing.xxl))
     }
 }
 

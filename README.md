@@ -4,9 +4,10 @@ An offline-first spaced-repetition study tracker for Android. Add what you want 
 remember, review it when RecallFlow says it's due, and let the scheduler decide when
 to show it again. No account, no cloud, no ads, no INTERNET permission.
 
-**Status: v2.3 — published.** Data layer, all screens, review flow, calendar,
-stats, notifications, settings and JSON backup are implemented. The APK is compiled
-and signature-verified; it has not yet been device-tested.
+**Status: v2.5 — released.** Data layer, all screens, focus sessions, two-day
+calendar, stats, notifications, calm palettes, haptics, settings and JSON backup are
+implemented. The APK is compiled and signature-verified; it has not yet been
+device-tested.
 
 ## Download
 
@@ -56,8 +57,9 @@ replaces), so this installs as an update over the old build and keeps the signin
 - Add topics with optional notes and a category; first review ≈ 26 hours later.
 - Today shows the next topic in a hero card, a completion ring, the current streak,
   and every due topic with swipe-right to review / swipe-left to snooze one hour.
-- Review screen: live stopwatch, notes/prompt card, 0–5 recall rating with plain-language
-  hints, a preview of the next interval, and save.
+- Review screen: a durable 90-minute focus session with an ongoing chronometer
+  notification, milestone compliments/haptics, notes/prompt card, 0–5 recall rating
+  with plain-language hints, a preview of the next interval, and save.
 - Topic detail: mastery bar, interval/ease/repetitions/time studied, full history,
   manual interval override, edit and delete.
 
@@ -75,6 +77,8 @@ replaces), so this installs as an update over the old build and keeps the signin
   scheduled reviews, and a Today shortcut.
 - Agenda for the selected day, add-review dialog (topic + time picker), and a tap-to-move
   sheet: in 1 hour, tomorrow, 3 days, next week, or remove.
+- Two-day timeline under the grid: selected day on the left, next day on the right.
+  Tap any empty hour to add a review pre-filled with that date and time.
 - Auto-schedule places the next review on the calendar whenever a review is saved or a
   topic is created; moving a pending event also moves the topic's next review.
 
@@ -92,6 +96,7 @@ replaces), so this installs as an update over the old build and keeps the signin
 ### Settings
 - Scheduling algorithm, daily limit, notification toggle, reminder time, exact-alarm
   shortcut, system/light/dark theme, dynamic color (Android 12+).
+- Focus palette (Sage, Ocean, Dusk, Sand, Indigo) and haptics mode (Strong, Light, Off).
 - JSON backup export/import through the system file picker (replaces local data).
 - How it works (reopens the tutorial) and version info.
 
@@ -103,8 +108,8 @@ any time from **Settings → How it works**.
 
 ## Design system
 
-- Material 3 (Material You) with dynamic color on Android 12+, fixed indigo
-  `#4F46E5` brand scheme elsewhere.
+- Material 3 (Material You) with dynamic color on Android 12+, or one of five calm
+  focus palettes (Sage default) over the same low-chroma neutrals elsewhere.
 - Light and dark themes; 24dp hero corners, soft tonal cards, one accent color,
   4/8/16/24dp spacing tokens.
 - Material Symbols icons (outlined for inactive tabs, filled for active).
@@ -124,17 +129,21 @@ app/src/main/java/com/studyretention/tracker/
 │   ├── SpacedRepetitionScheduler.kt    pure Kotlin, tested
 │   └── StatsCalculator.kt              streaks, retention series, totals
 ├── notifications/                      channel, alarms, boot receiver, due worker
+├── focus/                              durable session state + foreground service
 ├── viewmodel/RecallFlowViewModel.kt    one shared VM (MVVM)
 └── ui/
     ├── RecallFlowApp.kt                NavHost + bottom bar
     ├── navigation/Destinations.kt
     ├── components/                     headers, ring, bars, swipe row, dialogs
     ├── screens/{onboarding,today,topics,schedule,stats,review,settings}/
-    └── theme/, util/
+    └── theme/, util/ (formatters, haptics)
 ```
 
 Room database `recallflow.db` is exposed as Flows through the repository and a single
-shared ViewModel. The scheduler is dependency-free, so FSRS (or another strategy) can
+shared ViewModel. The focus timer derives elapsed time from a durable start stamp and
+runs its tick inside one small composable, so the rest of the review screen does not
+recompose every 100 ms. DateTimeFormatters are hoisted and calendar month counts are
+precomputed, keeping month swipes and long sessions smooth. The scheduler is dependency-free, so FSRS (or another strategy) can
 replace it without touching UI or database code.
 
 ## Testing
@@ -162,5 +171,7 @@ file you choose.
 - [x] Review flow, stopwatch, rating UI, history
 - [x] WorkManager + alarms, notifications, auto-scheduling
 - [x] Settings, JSON export/import
+- [x] 90-minute focus session, two-day timeline, calm palettes, haptics
+- [x] Performance pass: lazy Today list, isolated timer, cached formatters/counts
 - [ ] Device testing and polish (next)
-- [ ] Optional: R8 shrinking + branded splash before a public release
+- [ ] Optional: R8 shrinking + branded splash

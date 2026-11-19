@@ -6,6 +6,8 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.studyretention.tracker.RecallFlowApplication
+import com.studyretention.tracker.data.FocusPalette
+import com.studyretention.tracker.data.HapticsMode
 import com.studyretention.tracker.data.ReviewSession
 import com.studyretention.tracker.data.ScheduledEvent
 import com.studyretention.tracker.data.ThemeMode
@@ -140,6 +142,12 @@ class RecallFlowViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setDynamicColor(enabled: Boolean) =
         container.preferences.update { it.copy(dynamicColor = enabled) }
+
+    fun setHapticsMode(mode: HapticsMode) =
+        container.preferences.update { it.copy(hapticsMode = mode) }
+
+    fun setFocusPalette(palette: FocusPalette) =
+        container.preferences.update { it.copy(focusPalette = palette) }
 
     // ---- Backup ----
 

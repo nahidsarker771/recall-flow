@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
             RecallFlowTheme(
                 darkTheme = darkTheme,
                 dynamicColor = settings.dynamicColor,
+                palette = settings.focusPalette,
             ) {
                 val permissionLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestPermission(),

@@ -16,12 +16,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -42,6 +44,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -75,11 +78,14 @@ import com.studyretention.tracker.data.ScheduledEvent
 import com.studyretention.tracker.data.Topic
 import com.studyretention.tracker.ui.components.ScreenHeader
 import com.studyretention.tracker.ui.theme.Spacing
+import com.studyretention.tracker.ui.util.Haptics
 import com.studyretention.tracker.ui.util.durationLabel
 import com.studyretention.tracker.ui.util.formatDateShort
 import com.studyretention.tracker.ui.util.formatMonthYear
 import com.studyretention.tracker.ui.util.formatTime
 import com.studyretention.tracker.ui.util.ratingLabel
+import com.studyretention.tracker.ui.util.rememberHaptics
+import com.studyretention.tracker.ui.util.relativeDueLabel
 import com.studyretention.tracker.ui.util.toEpochMillis
 import com.studyretention.tracker.ui.util.toLocalDate
 import com.studyretention.tracker.ui.util.toLocalDateTime
@@ -95,6 +101,8 @@ import java.util.Locale
 
 private const val INITIAL_PAGE = 1200
 private const val PAGE_COUNT = 2401
+private const val DAY_SECTION_INDEX = 5
+private const val TIMELINE_START_INDEX = 8
 private val CELL_HEIGHT = 48.dp
 
 private val HourFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("h:mm", Locale.getDefault())
@@ -114,6 +122,8 @@ fun ScheduleScreen(vm: RecallFlowViewModel, onReview: (Long) -> Unit = {}) {
     val topics by vm.topics.collectAsStateWithLifecycle()
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val events by vm.events.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val haptics = rememberHaptics(settings.hapticsMode)
 
     val today = LocalDate.now()
     var selectedEpochDay by rememberSaveable { mutableLongStateOf(today.toEpochDay()) }
@@ -126,40 +136,48 @@ fun ScheduleScreen(vm: RecallFlowViewModel, onReview: (Long) -> Unit = {}) {
     var expanded by rememberSaveable { mutableStateOf(true) }
     var showAddSheet by rememberSaveable { mutableStateOf(false) }
     var detailEventId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var addSheetDateEpoch by rememberSaveable { mutableLongStateOf(selectedEpochDay) }
+    var addSheetHour by rememberSaveable { mutableIntStateOf(-1) }
+    val listState = rememberLazyListState()
+    val currentHour = LocalTime.now().hour
 
     val topicsById = remember(topics) { topics.associateBy { it.id } }
     val eventsByDay = remember(events) { events.groupBy { it.scheduledTime.toLocalDate() } }
     val sessionsByDay = remember(sessions) { sessions.groupBy { it.timestamp.toLocalDate() } }
 
     val visibleMonth = baseMonth.plusMonths((pagerState.currentPage - INITIAL_PAGE).toLong())
-    val monthPlanned = remember(events, visibleMonth) {
-        events.count { !it.isCompleted && YearMonth.from(it.scheduledTime.toLocalDate()) == visibleMonth }
+    val plannedByMonth = remember(events) {
+        events.filter { !it.isCompleted }
+            .groupingBy { YearMonth.from(it.scheduledTime.toLocalDate()) }
+            .eachCount()
     }
-    val monthReviewed = remember(sessions, visibleMonth) {
-        sessions.count { YearMonth.from(it.timestamp.toLocalDate()) == visibleMonth }
+    val reviewedByMonth = remember(sessions) {
+        sessions.groupingBy { YearMonth.from(it.timestamp.toLocalDate()) }.eachCount()
     }
+    val monthPlanned = plannedByMonth[visibleMonth] ?: 0
+    val monthReviewed = reviewedByMonth[visibleMonth] ?: 0
 
     val entries = remember(eventsByDay, sessionsByDay, selectedDate, topicsById) {
-        val dayEvents = eventsByDay[selectedDate].orEmpty()
-        val daySessions = sessionsByDay[selectedDate].orEmpty()
-        val reviewedTopicIds = daySessions.map { it.topicId }.toSet()
-        buildList {
-            dayEvents.forEach { event ->
-                val topic = topicsById[event.topicId]
-                when {
-                    !event.isCompleted ->
-                        add(AgendaEntry.Planned(event, event.scheduledTime, topic))
-                    event.topicId !in reviewedTopicIds ->
-                        add(AgendaEntry.Done(event, event.scheduledTime, topic))
-                }
-            }
-            daySessions.forEach { session ->
-                add(AgendaEntry.Reviewed(session, session.timestamp, topicsById[session.topicId]))
-            }
-        }.sortedBy { it.time }
+        buildDayEntries(selectedDate, eventsByDay, sessionsByDay, topicsById)
+    }
+    val nextDate = selectedDate.plusDays(1)
+    val nextEntries = remember(eventsByDay, sessionsByDay, nextDate, topicsById) {
+        buildDayEntries(nextDate, eventsByDay, sessionsByDay, topicsById)
     }
     val plannedToday = entries.count { it is AgendaEntry.Planned }
     val doneToday = entries.count { it is AgendaEntry.Reviewed || it is AgendaEntry.Done }
+    val entriesByHour = remember(entries) {
+        entries.groupBy { it.time.toLocalDateTime().hour }
+    }
+    val nextEntriesByHour = remember(nextEntries) {
+        nextEntries.groupBy { it.time.toLocalDateTime().hour }
+    }
+    val nextPending = remember(events) {
+        val pending = events.filter { !it.isCompleted }
+        val now = System.currentTimeMillis()
+        pending.filter { it.scheduledTime >= now }.minByOrNull { it.scheduledTime }
+            ?: pending.minByOrNull { it.scheduledTime }
+    }
 
     fun pageFor(month: YearMonth): Int =
         (INITIAL_PAGE + ChronoUnit.MONTHS.between(baseMonth, month)).toInt()
@@ -173,7 +191,7 @@ fun ScheduleScreen(vm: RecallFlowViewModel, onReview: (Long) -> Unit = {}) {
         }
     }
 
-    LaunchedEffect(pagerState.currentPage) {
+    LaunchedEffect(pagerState.settledPage) {
         val month = baseMonth.plusMonths((pagerState.currentPage - INITIAL_PAGE).toLong())
         if (YearMonth.from(selectedDate) != month) {
             selectedEpochDay = month
@@ -187,10 +205,13 @@ fun ScheduleScreen(vm: RecallFlowViewModel, onReview: (Long) -> Unit = {}) {
         label = "calendarHeight",
     )
 
-    val detailEvent = events.firstOrNull { it.id == detailEventId }
+    val detailEvent = remember(events, detailEventId) {
+        detailEventId?.let { id -> events.firstOrNull { it.id == id } }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 start = Spacing.screen,
@@ -209,10 +230,16 @@ fun ScheduleScreen(vm: RecallFlowViewModel, onReview: (Long) -> Unit = {}) {
 
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { jumpTo(today) }) { Text("Today") }
+                    TextButton(
+                        onClick = {
+                            haptics.soft()
+                            jumpTo(today)
+                        },
+                    ) { Text("Today") }
                     Spacer(Modifier.weight(1f))
                     IconButton(
                         onClick = {
+                            haptics.soft()
                             scope.launch {
                                 if (pagerState.currentPage > 0) {
                                     pagerState.animateScrollToPage(pagerState.currentPage - 1)
@@ -224,6 +251,7 @@ fun ScheduleScreen(vm: RecallFlowViewModel, onReview: (Long) -> Unit = {}) {
                     }
                     IconButton(
                         onClick = {
+                            haptics.soft()
                             scope.launch {
                                 if (pagerState.currentPage < PAGE_COUNT - 1) {
                                     pagerState.animateScrollToPage(pagerState.currentPage + 1)
@@ -250,7 +278,12 @@ fun ScheduleScreen(vm: RecallFlowViewModel, onReview: (Long) -> Unit = {}) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    IconButton(onClick = { expanded = !expanded }) {
+                    IconButton(
+                        onClick = {
+                            haptics.soft()
+                            expanded = !expanded
+                        },
+                    ) {
                         Icon(
                             imageVector = if (expanded) Icons.Outlined.UnfoldLess else Icons.Outlined.UnfoldMore,
                             contentDescription = if (expanded) "Collapse to week" else "Expand to month",
@@ -276,87 +309,104 @@ fun ScheduleScreen(vm: RecallFlowViewModel, onReview: (Long) -> Unit = {}) {
                         eventsByDay = eventsByDay,
                         sessionsByDay = sessionsByDay,
                         weekOnly = !expanded,
-                        onSelect = { jumpTo(it) },
+                        onSelect = { date ->
+                            haptics.soft()
+                            jumpTo(date)
+                            scope.launch { listState.animateScrollToItem(DAY_SECTION_INDEX) }
+                        },
                     )
                 }
                 Spacer(Modifier.height(Spacing.lg))
             }
 
             item {
-                Column {
-                    Text(
-                        text = dayTitle(selectedDate, today),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        text = if (entries.isEmpty()) {
-                            "No activity yet"
-                        } else {
-                            "$plannedToday planned · $doneToday done"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Two-day timeline",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = "Tap an empty hour to add a review. " +
+                                "$plannedToday planned · $doneToday done",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (selectedDate == today) {
+                        TextButton(
+                            onClick = {
+                                haptics.soft()
+                                scope.launch {
+                                    listState.animateScrollToItem(
+                                        TIMELINE_START_INDEX + currentHour,
+                                    )
+                                }
+                            },
+                        ) {
+                            Text("Now")
+                        }
+                    }
                 }
                 Spacer(Modifier.height(Spacing.sm))
             }
 
-            if (entries.isEmpty()) {
-                item {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = MaterialTheme.shapes.large,
-                        color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(Spacing.lg),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Text(
-                                text = if (topics.isEmpty()) {
-                                    "Add a topic first — its review will land here."
-                                } else {
-                                    "Nothing on this day. Tap + to add a review."
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center,
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(Spacing.lg))
-                }
+            item {
+                NextUpCard(
+                    next = nextPending,
+                    topic = nextPending?.let { topicsById[it.topicId] },
+                    onStart = { topicId ->
+                        haptics.strong()
+                        onReview(topicId)
+                    },
+                )
+                Spacer(Modifier.height(Spacing.md))
             }
 
-            items(
-                items = entries,
-                key = {
-                    when (it) {
-                        is AgendaEntry.Planned -> "e-${it.event.id}"
-                        is AgendaEntry.Done -> "d-${it.event.id}"
-                        is AgendaEntry.Reviewed -> "s-${it.session.id}"
-                    }
-                },
-            ) { entry ->
-                AgendaRow(
-                    entry = entry,
-                    onClick = {
+            item {
+                TwoDayHeader(
+                    leftDate = selectedDate,
+                    rightDate = nextDate,
+                    today = today,
+                    leftPlanned = plannedToday,
+                    rightPlanned = nextEntries.count { it is AgendaEntry.Planned },
+                )
+                Spacer(Modifier.height(Spacing.xs))
+            }
+
+            items(24, key = { "hour-$it" }) { hour ->
+                TwoDayHourRow(
+                    hour = hour,
+                    leftDate = selectedDate,
+                    rightDate = nextDate,
+                    leftEntries = entriesByHour[hour].orEmpty(),
+                    rightEntries = nextEntriesByHour[hour].orEmpty(),
+                    leftIsToday = selectedDate == today,
+                    rightIsToday = nextDate == today,
+                    currentHour = currentHour,
+                    haptics = haptics,
+                    onEntryClick = { entry ->
+                        haptics.soft()
                         when (entry) {
                             is AgendaEntry.Planned -> detailEventId = entry.event.id
                             is AgendaEntry.Done -> detailEventId = entry.event.id
                             is AgendaEntry.Reviewed -> Unit
                         }
                     },
+                    onAdd = { date, addHour ->
+                        addSheetDateEpoch = date.toEpochDay()
+                        addSheetHour = addHour
+                        showAddSheet = true
+                    },
                 )
-                Spacer(Modifier.height(Spacing.sm))
             }
 
             item {
                 Spacer(Modifier.height(Spacing.lg))
                 Text(
-                    text = "Swipe months · tap a day · tap an event to move it or start the review. " +
-                        "The + button adds a review from anywhere in the month.",
+                    text = "Swipe months · tap a day for its timeline · tap an event to move it " +
+                        "or start the review. The + button adds a review from anywhere in the month.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -364,7 +414,12 @@ fun ScheduleScreen(vm: RecallFlowViewModel, onReview: (Long) -> Unit = {}) {
         }
 
         FloatingActionButton(
-            onClick = { showAddSheet = true },
+            onClick = {
+                haptics.soft()
+                addSheetDateEpoch = selectedEpochDay
+                addSheetHour = -1
+                showAddSheet = true
+            },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(end = Spacing.screen, bottom = Spacing.lg),
@@ -378,9 +433,12 @@ fun ScheduleScreen(vm: RecallFlowViewModel, onReview: (Long) -> Unit = {}) {
     if (showAddSheet) {
         QuickAddSheet(
             topics = topics,
-            initialDate = selectedDate,
+            initialDate = LocalDate.ofEpochDay(addSheetDateEpoch),
+            initialHour = addSheetHour.takeIf { it >= 0 },
+            haptics = haptics,
             onDismiss = { showAddSheet = false },
             onConfirm = { topicId, whenMillis ->
+                haptics.strong()
                 vm.addEvent(topicId, whenMillis)
                 showAddSheet = false
             },
@@ -394,14 +452,17 @@ fun ScheduleScreen(vm: RecallFlowViewModel, onReview: (Long) -> Unit = {}) {
             topic = topicsById[event.topicId],
             onDismiss = { detailEventId = null },
             onMove = { newTime ->
+                haptics.soft()
                 vm.moveEvent(event.id, newTime)
                 detailEventId = null
             },
             onDelete = {
+                haptics.strong()
                 vm.deleteEvent(event.id)
                 detailEventId = null
             },
             onReview = { topicId ->
+                haptics.strong()
                 detailEventId = null
                 onReview(topicId)
             },
@@ -430,6 +491,31 @@ private sealed interface AgendaEntry {
         override val time: Long,
         override val topic: Topic?,
     ) : AgendaEntry
+}
+
+private fun buildDayEntries(
+    date: LocalDate,
+    eventsByDay: Map<LocalDate, List<ScheduledEvent>>,
+    sessionsByDay: Map<LocalDate, List<ReviewSession>>,
+    topicsById: Map<Long, Topic>,
+): List<AgendaEntry> {
+    val dayEvents = eventsByDay[date].orEmpty()
+    val daySessions = sessionsByDay[date].orEmpty()
+    val reviewedTopicIds = daySessions.map { it.topicId }.toSet()
+    return buildList {
+        dayEvents.forEach { event ->
+            val topic = topicsById[event.topicId]
+            when {
+                !event.isCompleted ->
+                    add(AgendaEntry.Planned(event, event.scheduledTime, topic))
+                event.topicId !in reviewedTopicIds ->
+                    add(AgendaEntry.Done(event, event.scheduledTime, topic))
+            }
+        }
+        daySessions.forEach { session ->
+            add(AgendaEntry.Reviewed(session, session.timestamp, topicsById[session.topicId]))
+        }
+    }.sortedBy { it.time }
 }
 
 @Composable
@@ -475,7 +561,7 @@ private fun MonthGrid(
                     ) {
                         DayCell(
                             date = date,
-                            inMonth = YearMonth.from(date) == month,
+                            inMonth = date.year == month.year && date.monthValue == month.monthValue,
                             selected = date == selectedDate,
                             today = date == today,
                             events = eventsByDay[date].orEmpty(),
@@ -553,102 +639,349 @@ private fun DayCell(
 }
 
 @Composable
-private fun AgendaRow(entry: AgendaEntry, onClick: () -> Unit) {
+private fun NextUpCard(
+    next: ScheduledEvent?,
+    topic: Topic?,
+    onStart: (Long) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.primaryContainer,
+    ) {
+        Row(
+            modifier = Modifier.padding(Spacing.lg),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "NEXT UP",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                Spacer(Modifier.height(Spacing.xs))
+                if (next == null) {
+                    Text(
+                        text = "Nothing scheduled. Tap + to plan a review.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                } else {
+                    Text(
+                        text = topic?.name ?: "Deleted topic",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = "${dayPrefix(next.scheduledTime)} · " +
+                            "${formatTime(next.scheduledTime)} · " +
+                            nextUpLabel(next.scheduledTime),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                    )
+                }
+            }
+            if (next != null && topic != null && !next.isCompleted) {
+                Button(onClick = { onStart(topic.id) }) {
+                    Icon(
+                        imageVector = Icons.Outlined.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(Spacing.xs))
+                    Text("Start")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TwoDayHeader(
+    leftDate: LocalDate,
+    rightDate: LocalDate,
+    today: LocalDate,
+    leftPlanned: Int,
+    rightPlanned: Int,
+) {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Spacer(Modifier.width(58.dp))
+        DayColumnHeader(
+            date = leftDate,
+            today = today,
+            planned = leftPlanned,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(Spacing.sm))
+        DayColumnHeader(
+            date = rightDate,
+            today = today,
+            planned = rightPlanned,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun DayColumnHeader(
+    date: LocalDate,
+    today: LocalDate,
+    planned: Int,
+    modifier: Modifier = Modifier,
+) {
+    val label = when (date) {
+        today -> "Today"
+        today.plusDays(1) -> "Tomorrow"
+        today.minusDays(1) -> "Yesterday"
+        else -> date.format(WeekdayFormat)
+    }
+    Column(modifier = modifier) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = "${date.format(MonthDayFormat)} · $planned planned",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun TwoDayHourRow(
+    hour: Int,
+    leftDate: LocalDate,
+    rightDate: LocalDate,
+    leftEntries: List<AgendaEntry>,
+    rightEntries: List<AgendaEntry>,
+    leftIsToday: Boolean,
+    rightIsToday: Boolean,
+    currentHour: Int,
+    haptics: Haptics,
+    onEntryClick: (AgendaEntry) -> Unit,
+    onAdd: (LocalDate, Int) -> Unit,
+) {
+    val leftIsNow = leftIsToday && hour == currentHour
+    val rightIsNow = rightIsToday && hour == currentHour
+    val labelColor = if (leftIsNow || rightIsNow) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .width(58.dp)
+                .padding(top = 2.dp, end = Spacing.sm),
+            horizontalAlignment = Alignment.End,
+        ) {
+            Text(
+                text = LocalTime.of(hour, 0).format(HourFormat),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = if (leftIsNow || rightIsNow) FontWeight.Bold else FontWeight.Medium,
+                color = labelColor,
+            )
+            Text(
+                text = LocalTime.of(hour, 0).format(AmPmFormat),
+                style = MaterialTheme.typography.labelSmall,
+                color = labelColor.copy(alpha = 0.7f),
+            )
+        }
+        DayHourCell(
+            date = leftDate,
+            hour = hour,
+            entries = leftEntries,
+            isNow = leftIsNow,
+            haptics = haptics,
+            onEntryClick = onEntryClick,
+            onAdd = onAdd,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(Spacing.sm))
+        DayHourCell(
+            date = rightDate,
+            hour = hour,
+            entries = rightEntries,
+            isNow = rightIsNow,
+            haptics = haptics,
+            onEntryClick = onEntryClick,
+            onAdd = onAdd,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun DayHourCell(
+    date: LocalDate,
+    hour: Int,
+    entries: List<AgendaEntry>,
+    isNow: Boolean,
+    haptics: Haptics,
+    onEntryClick: (AgendaEntry) -> Unit,
+    onAdd: (LocalDate, Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.heightIn(min = 56.dp)) {
+        HorizontalDivider(
+            modifier = Modifier.padding(top = 6.dp),
+            thickness = if (isNow) 1.5.dp else 1.dp,
+            color = if (isNow) {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+            } else {
+                MaterialTheme.colorScheme.outlineVariant
+            },
+        )
+        if (entries.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable {
+                        haptics.soft()
+                        onAdd(date, hour)
+                    },
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Add,
+                    contentDescription = "Add review at this hour",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.22f),
+                    modifier = Modifier
+                        .padding(end = Spacing.sm)
+                        .size(16.dp),
+                )
+            }
+        } else {
+            Spacer(Modifier.height(Spacing.xs))
+            entries.forEach { entry ->
+                TimelineEventCard(entry = entry, onClick = { onEntryClick(entry) })
+                Spacer(Modifier.height(Spacing.xs))
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimelineEventCard(entry: AgendaEntry, onClick: () -> Unit) {
     val accent = when (entry) {
         is AgendaEntry.Planned -> MaterialTheme.colorScheme.primary
         is AgendaEntry.Reviewed -> MaterialTheme.colorScheme.tertiary
         is AgendaEntry.Done -> MaterialTheme.colorScheme.outline
     }
+    val container = when (entry) {
+        is AgendaEntry.Planned -> MaterialTheme.colorScheme.primaryContainer
+        is AgendaEntry.Reviewed -> MaterialTheme.colorScheme.tertiaryContainer
+        is AgendaEntry.Done -> MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+    val content = when (entry) {
+        is AgendaEntry.Planned -> MaterialTheme.colorScheme.onPrimaryContainer
+        is AgendaEntry.Reviewed -> MaterialTheme.colorScheme.onTertiaryContainer
+        is AgendaEntry.Done -> MaterialTheme.colorScheme.onSurface
+    }
     val subtitle = when (entry) {
         is AgendaEntry.Planned ->
-            entry.topic?.category?.takeIf { it.isNotBlank() } ?: "Scheduled review"
+            entry.topic?.category?.takeIf { it.isNotBlank() } ?: "Planned review"
         is AgendaEntry.Done -> "Completed"
         is AgendaEntry.Reviewed -> "Reviewed · " +
             "${durationLabel(entry.session.durationSeconds.toLong())} · " +
             ratingLabel(entry.session.recallRating)
     }
-    val local = entry.time.toLocalDateTime()
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(container)
             .then(
                 if (entry is AgendaEntry.Reviewed) Modifier else Modifier.clickable(onClick = onClick),
-            ),
+            )
+            .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
     ) {
-        Column(
+        Box(
             modifier = Modifier
-                .width(62.dp)
-                .padding(top = Spacing.xs),
-        ) {
+                .width(3.dp)
+                .height(32.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(accent),
+        )
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = local.format(HourFormat),
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = if (entry is AgendaEntry.Planned) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
+                text = entry.topic?.name ?: "Deleted topic",
+                style = MaterialTheme.typography.titleSmall,
+                color = content,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = local.format(AmPmFormat),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = "${formatTime(entry.time)} · $subtitle",
+                style = MaterialTheme.typography.bodySmall,
+                color = content.copy(alpha = 0.75f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
-        Surface(
-            modifier = Modifier.weight(1f),
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.md),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Spacing.md),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(4.dp)
-                        .height(38.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(accent),
-                )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = entry.topic?.name ?: "Deleted topic",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                when (entry) {
-                    is AgendaEntry.Planned -> Icon(
-                        imageVector = Icons.Outlined.PlayArrow,
-                        contentDescription = "Start review",
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                    is AgendaEntry.Done -> Icon(
-                        imageVector = Icons.Outlined.Check,
-                        contentDescription = "Completed",
-                        tint = MaterialTheme.colorScheme.tertiary,
-                    )
-                    is AgendaEntry.Reviewed -> Text(
-                        text = "${entry.session.recallRating}/5",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.tertiary,
-                    )
-                }
-            }
+        when (entry) {
+            is AgendaEntry.Planned -> Icon(
+                imageVector = Icons.Outlined.PlayArrow,
+                contentDescription = "Start review",
+                tint = content,
+            )
+            is AgendaEntry.Done -> Icon(
+                imageVector = Icons.Outlined.Check,
+                contentDescription = "Completed",
+                tint = content,
+            )
+            is AgendaEntry.Reviewed -> Text(
+                text = "${entry.session.recallRating}/5",
+                style = MaterialTheme.typography.labelMedium,
+                color = content,
+            )
         }
+    }
+}
+
+private fun dayPrefix(epochMillis: Long): String {
+    val date = epochMillis.toLocalDate()
+    val today = LocalDate.now()
+    return when (date) {
+        today -> "Today"
+        today.plusDays(1) -> "Tomorrow"
+        today.minusDays(1) -> "Yesterday"
+        else -> date.format(MonthDayFormat)
+    }
+}
+
+private fun nextUpLabel(
+    epochMillis: Long,
+    nowMillis: Long = System.currentTimeMillis(),
+): String {
+    if (epochMillis <= nowMillis) return "overdue"
+    val minutes = (epochMillis - nowMillis) / 60_000L
+    return when {
+        minutes < 1L -> "now"
+        minutes < 60L -> "in ${minutes}m"
+        minutes < 24L * 60L -> "in ${minutes / 60}h ${minutes % 60}m"
+        else -> relativeDueLabel(epochMillis, nowMillis).lowercase(Locale.getDefault())
     }
 }
 
@@ -657,6 +990,8 @@ private fun AgendaRow(entry: AgendaEntry, onClick: () -> Unit) {
 private fun QuickAddSheet(
     topics: List<Topic>,
     initialDate: LocalDate,
+    initialHour: Int?,
+    haptics: Haptics,
     onDismiss: () -> Unit,
     onConfirm: (Long, Long) -> Unit,
 ) {
@@ -664,7 +999,9 @@ private fun QuickAddSheet(
     val today = LocalDate.now()
     var topicId by rememberSaveable { mutableLongStateOf(topics.firstOrNull()?.id ?: 0L) }
     var dateEpoch by rememberSaveable { mutableLongStateOf(initialDate.toEpochDay()) }
-    var minuteOfDay by rememberSaveable { mutableIntStateOf(nextHourMinute()) }
+    var minuteOfDay by rememberSaveable {
+        mutableIntStateOf(initialHour?.coerceIn(0, 23)?.times(60) ?: nextHourMinute())
+    }
     val date = LocalDate.ofEpochDay(dateEpoch)
     val time = LocalTime.of(minuteOfDay / 60, minuteOfDay % 60)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -699,14 +1036,20 @@ private fun QuickAddSheet(
                 item {
                     FilterChip(
                         selected = date == today,
-                        onClick = { dateEpoch = today.toEpochDay() },
+                        onClick = {
+                            haptics.soft()
+                            dateEpoch = today.toEpochDay()
+                        },
                         label = { Text("Today") },
                     )
                 }
                 item {
                     FilterChip(
                         selected = date == today.plusDays(1),
-                        onClick = { dateEpoch = today.plusDays(1).toEpochDay() },
+                        onClick = {
+                            haptics.soft()
+                            dateEpoch = today.plusDays(1).toEpochDay()
+                        },
                         label = { Text("Tomorrow") },
                     )
                 }
@@ -716,6 +1059,7 @@ private fun QuickAddSheet(
                             DatePickerDialog(
                                 context,
                                 { _, year, month, day ->
+                                    haptics.soft()
                                     dateEpoch = LocalDate.of(year, month + 1, day).toEpochDay()
                                 },
                                 date.year,
@@ -746,7 +1090,10 @@ private fun QuickAddSheet(
                 onClick = {
                     TimePickerDialog(
                         context,
-                        { _, hour, minute -> minuteOfDay = hour * 60 + minute },
+                        { _, hour, minute ->
+                            haptics.soft()
+                            minuteOfDay = hour * 60 + minute
+                        },
                         time.hour,
                         time.minute,
                         false,
@@ -780,7 +1127,10 @@ private fun QuickAddSheet(
                     items(topics, key = { it.id }) { topic ->
                         FilterChip(
                             selected = topicId == topic.id,
-                            onClick = { topicId = topic.id },
+                            onClick = {
+                                haptics.soft()
+                                topicId = topic.id
+                            },
                             label = {
                                 Text(
                                     text = topic.name,
